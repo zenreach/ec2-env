@@ -49,3 +49,15 @@ Some basic examples:
 - `DatabaseName` to `EC2_TAG_DATABASENAME`
 - `env--role` to `EC2_TAG_ENV_ROLE`
 - `aws:autoscaling:groupName` to `EC2_TAG_AWS_AUTOSCALING_GROUPNAME`
+
+Example Unit File
+-----------------
+The following unit file can be used to run the `ecr-env` tool on boot:
+
+    [Unit]
+    Description=Retrieve AWS EC2 environment
+    After=network.target
+    [Service]
+    Type=oneshot
+    RemainAfterExit=yes
+    ExecStart=/opt/bin/ec2-env -file=/etc/environment.ec2
