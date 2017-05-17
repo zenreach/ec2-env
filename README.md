@@ -1,5 +1,7 @@
 ec2-env
 =======
+[![Build Status](https://travis-ci.org/zenreach/ec2-env.svg?branch=master)](https://travis-ci.org/zenreach/ec2-env)
+
 This tool retrieves information about the EC2 instance that runs it and prints them formatted environment variables. The output can be eval'd by bash or written to a file with the `-file` option.
 
 Usage
