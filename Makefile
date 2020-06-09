@@ -10,6 +10,7 @@ build:
 	mkdir -p $(GOPATH)
 	go get -d .
 	go build
+	strip ${name}
 
 clean:
 	rm -rf $(GOPATH) $(name)

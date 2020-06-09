@@ -94,10 +94,10 @@ func writeEnv(out io.Writer) error {
 		fmt.Fprintf(out, "%s=%s\n", name, value)
 	}
 
-    wr("AWS_REGION", identity.AvailabilityZone)
-    wr("AWS_REGION_SHORT", zoneLetter(identity.AvailabilityZone))
-    wr("AWS_DEFAULT_REGION", identity.AvailabilityZone)
-    wr("AWS_DEFAULT_REGION_SHORT", zoneLetter(identity.AvailabilityZone))
+    wr("AWS_REGION", identity.Region)
+    wr("AWS_REGION_SHORT", shortRegion(identity.Region))
+    wr("AWS_DEFAULT_REGION", identity.Region)
+    wr("AWS_DEFAULT_REGION_SHORT", shortRegion(identity.Region))
 
 	wr("EC2_AVAILABILITY_ZONE", identity.AvailabilityZone)
 	wr("EC2_AVAILABILITY_ZONE_LETTER", zoneLetter(identity.AvailabilityZone))
