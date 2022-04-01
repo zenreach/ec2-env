@@ -7,8 +7,6 @@ export GOPATH=$(shell pwd)/.go
 all: build
 
 build:
-	mkdir -p $(GOPATH)
-	go get -d .
 	go build
 	strip ${name}
 
