@@ -7,8 +7,6 @@ export GOPATH=$(shell pwd)/.go
 all: build
 
 build:
-	mkdir -p $(GOPATH)
-	go get -d .
 	go build
 	strip ${name}
 
@@ -16,5 +14,5 @@ clean:
 	rm -rf $(GOPATH) $(name)
 
 test:
-	test -z "$(shell gofmt -s -l main.go)"
+	gofmt -s -l main.go
 	go vet main.go

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -24,7 +25,7 @@ func main() {
 	var file string
 	var helpShort, helpLong bool
 
-	flags := flag.NewFlagSet("ec20env", flag.ContinueOnError)
+	flags := flag.NewFlagSet("ec2-env", flag.ContinueOnError)
 	flags.StringVar(&file, "file", "", "Write environment variables to a file.")
 	flags.BoolVar(&helpShort, "h", false, "Display usage.")
 	flags.BoolVar(&helpLong, "help", false, "Display usage.")
@@ -59,21 +60,32 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: ec2-env [-file=FILE]")
 }
 
+type prop struct {
+	name  string
+	value interface{}
+}
+
 // writeEnv generated environment variables and writes them to `out`.
 func writeEnv(out io.Writer) error {
-	metaSvc := ec2metadata.New(session.New(), &aws.Config{
+	props := []prop{}
+
+	session := session.New()
+
+	metadataSvc := ec2metadata.New(session, &aws.Config{
 		Region: aws.String("us-east-1"),
 	})
-	if !metaSvc.Available() {
+	if !metadataSvc.Available() {
 		return errors.New("not running on an ec2 instance")
 	}
+	props = append(props, collectMetadataProps(metadataSvc)...)
 
-	identity, err := metaSvc.GetInstanceIdentityDocument()
+	identity, err := metadataSvc.GetInstanceIdentityDocument()
 	if err != nil {
 		return errors.Wrap(err, "failed to retrieve instance identity")
 	}
+	props = append(props, collectIdentityDocumentProps(&identity)...)
 
-	ec2Svc := ec2.New(session.New(), &aws.Config{
+	ec2Svc := ec2.New(session, &aws.Config{
 		Region: aws.String(identity.Region),
 	})
 	res, err := ec2Svc.DescribeInstances(&ec2.DescribeInstancesInput{
@@ -90,38 +102,66 @@ func writeEnv(out io.Writer) error {
 	}
 	instance := res.Reservations[0].Instances[0]
 
-	wr := func(name string, value interface{}) {
-		fmt.Fprintf(out, "%s=%s\n", name, value)
+	props = append(props, collectInstanceProps(instance)...)
+
+	sort.Slice(props, func(i, j int) bool { return props[i].name < props[j].name })
+	for _, prop := range props {
+		fmt.Fprintf(out, "%s=%s\n", prop.name, prop.value)
 	}
 
-    wr("AWS_REGION", identity.Region)
-    wr("AWS_REGION_SHORT", shortRegion(identity.Region))
-    wr("AWS_DEFAULT_REGION", identity.Region)
-    wr("AWS_DEFAULT_REGION_SHORT", shortRegion(identity.Region))
-
-	wr("EC2_AVAILABILITY_ZONE", identity.AvailabilityZone)
-	wr("EC2_AVAILABILITY_ZONE_LETTER", zoneLetter(identity.AvailabilityZone))
-	wr("EC2_REGION", identity.Region)
-	wr("EC2_REGION_SHORT", shortRegion(identity.Region))
-	wr("EC2_INSTANCE_ID", identity.InstanceID)
-	wr("EC2_INSTANCE_TYPE", identity.InstanceType)
-	wr("EC2_ACCOUNT_ID", identity.AccountID)
-	wr("EC2_IMAGE_ID", identity.ImageID)
-
-	wr("EC2_PRIVATE_DNS", aws.StringValue(instance.PrivateDnsName))
-	wr("EC2_PRIVATE_IP", aws.StringValue(instance.PrivateIpAddress))
-	wr("EC2_PUBLIC_DNS", aws.StringValue(instance.PublicDnsName))
-	wr("EC2_PUBLIC_IP", aws.StringValue(instance.PublicIpAddress))
-	wr("EC2_SUBNET_ID", aws.StringValue(instance.SubnetId))
-	wr("EC2_VPC_ID", aws.StringValue(instance.VpcId))
-	wr("EC2_KEYNAME", aws.StringValue(instance.KeyName))
-	wr("EC2_NAMESERVER", getNameserver(metaSvc))
-
-	for _, tag := range instance.Tags {
-		name := fmt.Sprintf("EC2_TAG_%s", tagEnvName(aws.StringValue(tag.Key)))
-		wr(name, aws.StringValue(tag.Value))
-	}
 	return nil
+}
+
+func collectMetadataProps(metadataSvc *ec2metadata.EC2Metadata) []prop {
+	return []prop{
+		{name: "EC2_AVAILABILITY_ZONE_ID", value: getAvailabilityZoneId(metadataSvc)},
+		{name: "EC2_NAMESERVER", value: getNameserver(metadataSvc)},
+	}
+}
+
+func getNameserver(metadataSvc *ec2metadata.EC2Metadata) string {
+	nameserver := EC2_CLASSIC_NAMESERVER
+	mac, err := metadataSvc.GetMetadata("mac")
+	if err != nil {
+		return nameserver
+	}
+	path := fmt.Sprintf("network/interfaces/macs/%s/vpc-ipv4-cidr-block", mac)
+	cidr, err := metadataSvc.GetMetadata(path)
+	if err != nil {
+		return nameserver
+	}
+	ip, _, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nameserver
+	}
+	ip[len(ip)-1] = ip[len(ip)-1] + 2
+	return ip.String()
+}
+
+func getAvailabilityZoneId(metadataSvc *ec2metadata.EC2Metadata) string {
+	path := "placement/availability-zone-id"
+	az_id, err := metadataSvc.GetMetadata(path)
+	if err != nil {
+		return ""
+	}
+	return az_id
+}
+
+func collectIdentityDocumentProps(identity *ec2metadata.EC2InstanceIdentityDocument) []prop {
+	return []prop{
+		{name: "AWS_DEFAULT_REGION_SHORT", value: shortRegion(identity.Region)},
+		{name: "AWS_DEFAULT_REGION", value: identity.Region},
+		{name: "AWS_REGION_SHORT", value: shortRegion(identity.Region)},
+		{name: "AWS_REGION", value: identity.Region},
+		{name: "EC2_ACCOUNT_ID", value: identity.AccountID},
+		{name: "EC2_AVAILABILITY_ZONE_LETTER", value: zoneLetter(identity.AvailabilityZone)},
+		{name: "EC2_AVAILABILITY_ZONE", value: identity.AvailabilityZone},
+		{name: "EC2_IMAGE_ID", value: identity.ImageID},
+		{name: "EC2_INSTANCE_ID", value: identity.InstanceID},
+		{name: "EC2_INSTANCE_TYPE", value: identity.InstanceType},
+		{name: "EC2_REGION_SHORT", value: shortRegion(identity.Region)},
+		{name: "EC2_REGION", value: identity.Region},
+	}
 }
 
 // shortRegion returns a three letter abbreviation for the region.
@@ -175,22 +215,20 @@ func toSnake(name string) string {
 	return buf.String()
 }
 
-func getNameserver(metaSvc *ec2metadata.EC2Metadata) string {
-	nameserver := EC2_CLASSIC_NAMESERVER
-	mac, err := metaSvc.GetMetadata("mac")
-	if err != nil {
-		return nameserver
+func collectInstanceProps(instance *ec2.Instance) []prop {
+	props := []prop{
+		{name: "EC2_KEYNAME", value: aws.StringValue(instance.KeyName)},
+		{name: "EC2_PRIVATE_DNS", value: aws.StringValue(instance.PrivateDnsName)},
+		{name: "EC2_PRIVATE_IP", value: aws.StringValue(instance.PrivateIpAddress)},
+		{name: "EC2_PUBLIC_DNS", value: aws.StringValue(instance.PublicDnsName)},
+		{name: "EC2_PUBLIC_IP", value: aws.StringValue(instance.PublicIpAddress)},
+		{name: "EC2_SUBNET_ID", value: aws.StringValue(instance.SubnetId)},
+		{name: "EC2_VPC_ID", value: aws.StringValue(instance.VpcId)},
 	}
-	path := fmt.Sprintf("network/interfaces/macs/%s/vpc-ipv4-cidr-block", mac)
-	cidr, err := metaSvc.GetMetadata(path)
-	if err != nil {
-		return nameserver
+	for _, tag := range instance.Tags {
+		name := fmt.Sprintf("EC2_TAG_%s", tagEnvName(aws.StringValue(tag.Key)))
+		value := aws.StringValue(tag.Value)
+		props = append(props, prop{name, value})
 	}
-
-	ip, _, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return nameserver
-	}
-	ip[len(ip)-1] = ip[len(ip)-1] + 2
-	return ip.String()
+	return props
 }
